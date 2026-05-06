@@ -1,0 +1,113 @@
+library IEEE;
+use IEEE.STD_LOGIC_1164.ALL;
+use IEEE.NUMERIC_STD.ALL;
+
+entity package_event_classifier is
+    Port (
+        clk_i                  : in  STD_LOGIC;
+        rst_i                  : in  STD_LOGIC;
+
+        frame_done_i            : in  STD_LOGIC;
+        frame_package_present_i : in  STD_LOGIC;
+        frame_scratch_i         : in  STD_LOGIC;
+
+        package_in_region_o     : out STD_LOGIC;
+        result_valid_o          : out STD_LOGIC;
+        damaged_o               : out STD_LOGIC
+    );
+end package_event_classifier;
+
+architecture Behavioral of package_event_classifier is
+
+    type state_type is (IDLE, IN_PACKAGE);
+    signal state : state_type := IDLE;
+
+    signal present_cnt : unsigned(2 downto 0) := (others => '0');
+    signal absent_cnt  : unsigned(2 downto 0) := (others => '0');
+
+    signal scratch_latched : STD_LOGIC := '0';
+
+    constant PRESENT_CONFIRM_FRAMES : unsigned(2 downto 0) := "010"; -- 2 frames
+    constant ABSENT_CONFIRM_FRAMES  : unsigned(2 downto 0) := "010"; -- 2 frames
+
+begin
+
+    process(clk_i)
+    begin
+        if rising_edge(clk_i) then
+            if rst_i = '1' then
+                state <= IDLE;
+
+                present_cnt <= (others => '0');
+                absent_cnt <= (others => '0');
+                scratch_latched <= '0';
+
+                package_in_region_o <= '0';
+                result_valid_o <= '0';
+                damaged_o <= '0';
+
+            else
+                result_valid_o <= '0';
+
+                if frame_done_i = '1' then
+
+                    case state is
+
+                        when IDLE =>
+                            package_in_region_o <= '0';
+                            scratch_latched <= '0';
+                            absent_cnt <= (others => '0');
+
+                            if frame_package_present_i = '1' then
+
+                                if present_cnt < PRESENT_CONFIRM_FRAMES then
+                                    present_cnt <= present_cnt + 1;
+                                end if;
+
+                                if present_cnt >= PRESENT_CONFIRM_FRAMES - 1 then
+                                    state <= IN_PACKAGE;
+                                    package_in_region_o <= '1';
+                                    scratch_latched <= frame_scratch_i;
+                                end if;
+
+                            else
+                                present_cnt <= (others => '0');
+                            end if;
+
+                        when IN_PACKAGE =>
+                            package_in_region_o <= '1';
+
+                            if frame_scratch_i = '1' then
+                                scratch_latched <= '1';
+                            end if;
+
+                            if frame_package_present_i = '0' then
+
+                                if absent_cnt < ABSENT_CONFIRM_FRAMES then
+                                    absent_cnt <= absent_cnt + 1;
+                                end if;
+
+                                if absent_cnt >= ABSENT_CONFIRM_FRAMES - 1 then
+                                    damaged_o <= scratch_latched;
+                                    result_valid_o <= '1';
+
+                                    state <= IDLE;
+                                    package_in_region_o <= '0';
+
+                                    present_cnt <= (others => '0');
+                                    absent_cnt <= (others => '0');
+                                    scratch_latched <= '0';
+                                end if;
+
+                            else
+                                absent_cnt <= (others => '0');
+                            end if;
+
+                    end case;
+
+                end if;
+            end if;
+        end if;
+    end process;
+
+end Behavioral;
